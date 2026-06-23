@@ -79,9 +79,6 @@ public class JSRuntime implements AutoCloseable {
                             e = (Throwable)args[args.length - 1];
                             args = Arrays.copyOf(args, args.length - 1);
                         }
-                        for (int i=0;i<args.length;i++) {
-                            msg = msg.replace("{}", JSRuntime.toString(args[i]));
-                        }
                         StringBuilder sb = new StringBuilder();
                         sb.append("# [");
                         switch (level) {
@@ -93,7 +90,7 @@ public class JSRuntime implements AutoCloseable {
                             default: sb.append("level" + level);
                         }
                         sb.append("]: ");
-                        sb.append(msg);
+                        sb.append(JSRuntime.format(msg, args));
                         sb.append("\n");
                         pw.append(sb);
                         if (e != null) {
@@ -135,10 +132,7 @@ public class JSRuntime implements AutoCloseable {
                             e = (Throwable)args[args.length - 1];
                             args = Arrays.copyOf(args, args.length - 1);
                         }
-                        for (int i=0;i<args.length;i++) {
-                            msg = msg.replace("{}", JSRuntime.toString(args[i]));
-                        }
-                        logger.log(LEVELS[level], msg, e);
+                        logger.log(LEVELS[level], JSRuntime.format(msg, args), e);
                     }
                 }
             };
@@ -331,6 +325,18 @@ public class JSRuntime implements AutoCloseable {
             fnCloseRuntime();
             pointer = 0;
         }
+    }
+
+    static String format(String msg, Object... args) {
+        for (int i=0;i<args.length;i++) {
+            int ix = msg.indexOf("{}");
+            if (ix >= 0) {
+                msg = msg.substring(0, ix) + toString(args[i]) + msg.substring(ix + 2);
+            } else {
+                break;
+            }
+        }
+        return msg;
     }
 
     static String toString(Object o) {
