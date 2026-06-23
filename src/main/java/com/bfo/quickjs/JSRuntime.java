@@ -770,6 +770,22 @@ public class JSRuntime implements AutoCloseable {
     }
 
     /**
+     * Invoke a function as a constructor
+     */
+    byte[] fnFunctionConstruct(JSFunction function, byte[] data) {
+        final JSContext ctx = function.getContext();
+        long ptrlen = store(data);
+        scriptStart = System.currentTimeMillis();
+        long[] r = call("construct_function_wasm", ctx.getPointer(), function.getPointer(), ptrlen2ptr(ptrlen), ptrlen2len(ptrlen));
+        scriptStart = 0;
+        dealloc(ptrlen);
+        ptrlen = r[0];
+        data = fetch(ptrlen);
+        dealloc(ptrlen);
+        return data;
+    }
+
+    /**
      * Return true if this function is a constructor function
      */
     boolean fnFunctionIsConstructor(JSFunction function) {

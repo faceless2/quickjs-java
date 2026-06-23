@@ -31,8 +31,8 @@ public class JSFunction implements JSType {
     }
 
     /** 
-     * Return true if the function is a constructor function,
-     * false if it is a regular function
+     * Return true if the function may be called as a Constructor.
+     * A function may be both Callable and Constructable!
      */
     public boolean isConstructor() {
         if (constructor == null) {
@@ -52,4 +52,14 @@ public class JSFunction implements JSType {
         return ctx.unpack(data);
     }
 
+    /**
+     * Call the function as a constructor
+     * @param args the list of arguments for the function
+     * @return the function result
+     */
+    public Object construct(Object... args) {
+        byte[] data = ctx.pack(List.of(args));
+        data = ctx.getRuntime().fnFunctionConstruct(this, data);
+        return ctx.unpack(data);
+    }
 }
