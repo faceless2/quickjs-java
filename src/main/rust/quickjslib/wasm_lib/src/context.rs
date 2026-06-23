@@ -140,6 +140,13 @@ where
         }
         let _guard = ContextGuard;
 
+        ctx.store_userdata(ContextPtr::new(context_ptr));
         f(ctx)
     })
+}
+
+/// Return the pointer to the current context
+pub fn get_context_pointer(ctx: &Ctx<'_>) -> u64 {
+    let ptr = ctx.userdata::<ContextPtr>().unwrap().ptr;
+    ptr
 }
