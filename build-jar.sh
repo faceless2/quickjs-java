@@ -10,6 +10,5 @@ javac --class-path ${CLASSPATH}:${WASM_TARGET_RESOURCES} \
       --source-path ${WASM_TARGET_SOURCES} \
       -Xlint:unchecked \
       -Xlint:rawtypes \
-      src/main/java/com/bfo/quickjs/*.java
-
+      src/main/java/com/bfo/quickjs/*.java && \
 jar --create --file ${JAR_FILE} -C target/classes com -C ${WASM_TARGET_RESOURCES} com
