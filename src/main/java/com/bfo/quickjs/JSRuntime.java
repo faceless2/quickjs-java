@@ -17,13 +17,15 @@ import com.dylibso.chicory.wasm.WasmModule;
 public class JSRuntime implements AutoCloseable {
     
 
-    private final Instance instance;          // WASM instance
+    private Instance instance;          // WASM instance
+    private InputStream stdin;
+    private OutputStream stdout, stderr;
     private final Map<Long,JSContext> contexts = new HashMap<>();
     private final Logger logger;
     private long pointer;                   // Pointer to the runtime in the wasm library.
     private long scriptRuntimeLimit;
     private long scriptStart;
-    private int callCountLimit = 0, callCount;
+    private int memoryLimit;
 
     /** 
      * A simple generic Logger interface, for extensible logging
@@ -148,79 +150,88 @@ public class JSRuntime implements AutoCloseable {
 
     /**
      * Create a new JSRuntime with the specified Logger
+     * @param logger the logger
      */
     public JSRuntime(Logger logger) {
         this.logger = logger;
-        WasiOptions options = WasiOptions.builder().withStdout(System.out).build();
-        WasiPreview1 wasi = WasiPreview1.builder().withOptions(options).build();
-
-        Store store = new Store().addFunction(wasi.toHostFunctions()).addFunction(new HostFunction[] {
-
-            createHostFunction("env", "call_java_function", List.of(ValType.I32, ValType.I32, ValType.I32, ValType.I32), List.of(ValType.I64),
-                (Instance instance, long... args) -> { return new long[] { fnCallJavaFunction((int)args[0], (int)args[1], (int)args[2], (int)args[3]) }; }),
-
-            createHostFunction("env", "log_java", List.of(ValType.I32, ValType.I32, ValType.I32), List.of(),
-                (Instance instance, long... args) -> { fnLog((int)args[0], (int)args[1], (int)args[2]); return new long[0]; }),
-
-            createHostFunction("env", "js_interrupt_handler", List.of(), List.of(ValType.I32),
-                (Instance instance, long... args) -> { return new long[] { fnInterruptHandler() }; }),
-
-            createHostFunction("env", "create_completable_future", List.of(ValType.I64, ValType.I64), List.of(ValType.I64),
-                (Instance instance, long... args) -> { return new long[] { fnCreateCompletableFuture(args[0], args[1]) }; }),
-
-            createHostFunction("env", "complete_completable_future", List.of(ValType.I64, ValType.I32, ValType.I32, ValType.I32, ValType.I32), List.of(ValType.I64),
-                (Instance instance, long... args) -> { fnCompleteCompletableFuture(args[0], (int)args[1], (int)args[2], (int)args[3], (int)args[4]); return new long[] { 0 }; })
-
-        });
-        WasmModule module = WasmLib.load();
-
-        instance = Instance.builder(module).withImportValues(store.toImportValues()).withMachineFactory(WasmLib::create).build();
-        this.pointer = fnCreateRuntime();
-
-        int level;
-        for (level=Logger.ERROR;level<=Logger.TRACE && logger.isLoggable(level);level++);
-        fnInitLogger(Math.min(level, Logger.TRACE));
     }
 
-    private HostFunction createHostFunction(final String set, final String name, final List<ValType> in, final List<ValType> out, final WasmFunctionHandle func) {
-        return new HostFunction(set, name, FunctionType.of(in, out), (Instance instance, long... args) -> {
-            try {
-                long[] result = func.apply(instance, args);
-                if (result == null) {
-                    getLogger().log(Logger.TRACE, "hear {}.{}{} = {}", set, name, args, result);
-                } else if (result.length == 1) {
-                    getLogger().log(Logger.TRACE, "hear {}.{}{} = {} ({} {})", set, name, args, result, ptrlen2ptr(result[0]), ptrlen2len(result[0]));
-                }
-                return result;
-            } catch (RuntimeException e) {
-                getLogger().log(Logger.TRACE, "hear {}.{}{} = ERROR", set, name, args, e);
-                return null;
-            }
-        });
+    /**
+     * Set the InputStream to read as stdin, or null for none (the default)
+     * Must be called before the first context is created
+     * @param in the InputStream, or null
+     * @return this
+     */
+    public JSRuntime setStdin(InputStream in) {
+        if (instance != null) {
+            throw new IllegalStateException("Already created");
+        }
+        this.stdin = in;
+        return this;
+    }
+
+    /**
+     * Set the OutputStream to write to as stdout, or null for none (the default)
+     * Must be called before the first context is created
+     * @param out the OutputStream, or null
+     * @return this
+     */
+    public JSRuntime setStdout(OutputStream out) {
+        if (instance != null) {
+            throw new IllegalStateException("Already created");
+        }
+        this.stdout = out;
+        return this;
+    }
+
+    /**
+     * Set the OutputStream to write to as stderr, or null for none (the default)
+     * Must be called before the first context is created
+     * @param err the OutputStream, or null
+     * @return this
+     */
+    public JSRuntime setStderr(OutputStream err) {
+        if (instance != null) {
+            throw new IllegalStateException("Already created");
+        }
+        this.stderr = err;
+        return this;
     }
 
     /**
      * Set the number of bytes that can be allocated.
      * Attempts to allocate more within this Runtime will throw an Exception
      * @param bytes the number of bytes that can be allocated in the runtime
+     * @return this
      */
-    public void setMemoryLimit(int bytes) {
-        fnSetMemoryLimit(bytes);
+    public JSRuntime setMemoryLimit(int bytes) {
+        if (bytes <= 0) {
+            throw new IllegalArgumentException("Invalid value");
+        }
+        memoryLimit = bytes;
+        if (instance != null) {
+            fnRuntimeSetMemoryLimit(memoryLimit);
+        }
+        return this;
     }
 
     /**
      * Set the number of milliseconds before a task is cancelled
      * A script that takes longer than this to excecute will be interrupted and an exception thrown.
      * @param ms the number of milliseconds that an individual script can run for in this runtime
+     * @return this
      */
-    public void setRuntimeLimit(long ms) {
+    public JSRuntime setRuntimeLimit(long ms) {
         scriptRuntimeLimit = Math.max(0, ms);
+        return this;
     }
+
 
     /**
      * Create a new JSContext
      */
     public JSContext createContext() {
+        getInstance();
         JSContext ctx = new JSContext(this);
         contexts.put(ctx.getPointer(), ctx);
         return ctx;
@@ -234,83 +245,15 @@ public class JSRuntime implements AutoCloseable {
         return ctx;
     }
 
-    /**
-     * Return the logger specified in teh constructor
-     */
-    public Logger getLogger() {
-        return logger;
-    }
-
-    Instance getInstance() {
-        return instance;
-    }
-
     long getPointer() {
         return pointer;
     }
 
-    long[] call(String name, long... args) {
-        if (callCountLimit > 0 && ++callCount > callCountLimit) {
-            RuntimeException e = new RuntimeException("Too many calls");
-            e.printStackTrace();
-            throw e;
-        }
-        ExportFunction func = instance.export(name);
-        try {
-            long[] result = func.apply(args);
-            if (result == null) {
-                getLogger().log(Logger.TRACE, "call {}{} = {}", name, args, result);
-            } else if (result.length == 1) {
-                getLogger().log(Logger.TRACE, "call {}{} = {} ({} {})", name, args, result, ptrlen2ptr(result[0]), ptrlen2len(result[0]));
-            }
-            return result;
-        } catch (RuntimeException e) {
-            getLogger().log(Logger.TRACE, "call {}{} = ERROR", name, args, e);
-            throw e;
-        }
-    }
-
-    private static long ptrlen(int ptr, int len) {
-        return (long) len | ((long) ptr << 32);
-    }
-    private static int ptrlen2ptr(long ptrlen) {
-        return (int) ((ptrlen >> 32) & 0xffffffff);
-    }
-    private static int ptrlen2len(long ptrlen) {
-        return (int) (ptrlen & 0xffffffff);
-    }
-
     /**
-     * Writes the given data to memory and returns the memory location of the data
-     *
-     * @param data the data to write
-     * @return the memory location of the data
+     * Return the logger specified in the constructor
      */
-    long store(byte[] data) {
-        int ptr = alloc(data.length);
-        instance.memory().write(ptr, data);
-        return ptrlen(ptr, data.length);
-    }
-
-    byte[] fetch(int ptr, int len) {
-        return instance.memory().readBytes(ptr, len);
-    }
-
-    byte[] fetch(long ptrlen) {
-        return fetch(ptrlen2ptr(ptrlen), ptrlen2len(ptrlen));
-    }
-
-    int alloc(int size) {
-        long[] ptr = call("alloc", size);
-        return (int)ptr[0];
-    }
-
-    void dealloc(long ptrlen) {
-        dealloc(ptrlen2ptr(ptrlen), ptrlen2len(ptrlen));
-    }
-
-    void dealloc(int ptr, int len) {
-        call("dealloc", ptr, len);
+    public Logger getLogger() {
+        return logger;
     }
 
     /**
@@ -322,10 +265,14 @@ public class JSRuntime implements AutoCloseable {
                 ctx.close();
             }
             contexts.clear();
-            fnCloseRuntime();
+            fnRuntimeClose();
             pointer = 0;
         }
     }
+
+    //--------------------------------------------------------------------------
+    // Some utility functions
+    //--------------------------------------------------------------------------
 
     static String format(String msg, Object... args) {
         for (int i=0;i<args.length;i++) {
@@ -355,8 +302,129 @@ public class JSRuntime implements AutoCloseable {
         }
     }
 
+    private HostFunction createHostFunction(final String set, final String name, final List<ValType> in, final List<ValType> out, final WasmFunctionHandle func) {
+        return new HostFunction(set, name, FunctionType.of(in, out), (Instance instance, long... args) -> {
+            try {
+                long[] result = func.apply(instance, args);
+                if (result == null) {
+                    getLogger().log(Logger.TRACE, "hear {}.{}{} = {}", set, name, args, result);
+                } else if (result.length == 1) {
+                    getLogger().log(Logger.TRACE, "hear {}.{}{} = {} ({} {})", set, name, args, result, ptrlen2ptr(result[0]), ptrlen2len(result[0]));
+                }
+                return result;
+            } catch (RuntimeException e) {
+                getLogger().log(Logger.TRACE, "hear {}.{}{} = ERROR", set, name, args, e);
+                return null;
+            }
+        });
+    }
+
+    Instance getInstance() {
+        if (instance == null) {
+            WasiOptions.Builder optionsBuilder = WasiOptions.builder();
+            if (stdout != null) {
+                optionsBuilder = optionsBuilder.withStdout(stdout);
+            }
+            if (stderr != null) {
+                optionsBuilder = optionsBuilder.withStderr(stderr);
+            }
+            if (stdin != null) {
+                optionsBuilder = optionsBuilder.withStdin(stdin);
+            }
+            WasiOptions options = optionsBuilder.build();
+            WasiPreview1 wasi = WasiPreview1.builder().withOptions(options).build();
+            Store store = new Store().addFunction(wasi.toHostFunctions()).addFunction(new HostFunction[] {
+
+                createHostFunction("env", "call_java_function", List.of(ValType.I32, ValType.I32, ValType.I32, ValType.I32), List.of(ValType.I64),
+                    (Instance instance, long... args) -> { return new long[] { fnCallJavaFunction((int)args[0], (int)args[1], (int)args[2], (int)args[3]) }; }),
+
+                createHostFunction("env", "log_java", List.of(ValType.I32, ValType.I32, ValType.I32), List.of(),
+                    (Instance instance, long... args) -> { fnLog((int)args[0], (int)args[1], (int)args[2]); return new long[0]; }),
+
+                createHostFunction("env", "js_interrupt_handler", List.of(), List.of(ValType.I32),
+                    (Instance instance, long... args) -> { return new long[] { fnInterruptHandler() }; }),
+
+                createHostFunction("env", "create_completable_future", List.of(ValType.I64, ValType.I64), List.of(ValType.I64),
+                    (Instance instance, long... args) -> { return new long[] { fnCreateCompletableFuture(args[0], args[1]) }; }),
+
+                createHostFunction("env", "complete_completable_future", List.of(ValType.I64, ValType.I32, ValType.I32, ValType.I32, ValType.I32), List.of(ValType.I64),
+                    (Instance instance, long... args) -> { fnCompleteCompletableFuture(args[0], (int)args[1], (int)args[2], (int)args[3], (int)args[4]); return new long[] { 0 }; })
+
+            });
+            WasmModule module = WasmLib.load();
+            instance = Instance.builder(module).withImportValues(store.toImportValues()).withMachineFactory(WasmLib::create).build();
+            this.pointer = fnRuntimeCreate();
+
+            int level;
+            for (level=Logger.ERROR;level<=Logger.TRACE && logger.isLoggable(level);level++);
+            fnRuntimeInitLogger(Math.min(level, Logger.TRACE));
+            if (memoryLimit > 0) {
+                fnRuntimeSetMemoryLimit(memoryLimit);
+            }
+        }
+        return instance;
+    }
+
     //--------------------------------------------------------------------------------------
-    // Incoming functions
+    // Memory operations: store, fetch, alloc, dealloc.
+    // A "long" value represents two 32-bit values (ptr and len) bundled into a 64-bit value (ptrlen)
+    //--------------------------------------------------------------------------------------
+
+    private static long ptrlen(int ptr, int len) {
+        return (long) len | ((long) ptr << 32);
+    }
+    private static int ptrlen2ptr(long ptrlen) {
+        return (int) ((ptrlen >> 32) & 0xffffffff);
+    }
+    private static int ptrlen2len(long ptrlen) {
+        return (int) (ptrlen & 0xffffffff);
+    }
+
+    long store(byte[] data) {
+        int ptr = alloc(data.length);
+        getInstance().memory().write(ptr, data);
+        return ptrlen(ptr, data.length);
+    }
+
+    byte[] fetch(int ptr, int len) {
+        return getInstance().memory().readBytes(ptr, len);
+    }
+
+    byte[] fetch(long ptrlen) {
+        return fetch(ptrlen2ptr(ptrlen), ptrlen2len(ptrlen));
+    }
+
+    int alloc(int size) {
+        long[] ptr = call("alloc", size);
+        return (int)ptr[0];
+    }
+
+    void dealloc(long ptrlen) {
+        dealloc(ptrlen2ptr(ptrlen), ptrlen2len(ptrlen));
+    }
+
+    void dealloc(int ptr, int len) {
+        call("dealloc", ptr, len);
+    }
+
+    long[] call(String name, long... args) {
+        ExportFunction func = getInstance().export(name);
+        try {
+            long[] result = func.apply(args);
+            if (result == null) {
+                getLogger().log(Logger.TRACE, "call {}{} = {}", name, args, result);
+            } else if (result.length == 1) {
+                getLogger().log(Logger.TRACE, "call {}{} = {} ({} {})", name, args, result, ptrlen2ptr(result[0]), ptrlen2len(result[0]));
+            }
+            return result;
+        } catch (RuntimeException e) {
+            getLogger().log(Logger.TRACE, "call {}{} = ERROR", name, args, e);
+            throw e;
+        }
+    }
+
+    //--------------------------------------------------------------------------------------
+    // Incoming functions - registered as HostFunctions and called from Chicory
     //--------------------------------------------------------------------------------------
 
     /**
@@ -458,20 +526,20 @@ public class JSRuntime implements AutoCloseable {
     // Runtime functions
     //-------------------------------------------------------------------------
 
-    private long fnCreateRuntime() {
+    private long fnRuntimeCreate() {
         long[] r = call("create_runtime_wasm");
         return r[0];
     }
 
-    private void fnCloseRuntime() {
+    private void fnRuntimeClose() {
         call("close_runtime_wasm", getPointer());
     }
 
-    private void fnSetMemoryLimit(int bytes) {
+    private void fnRuntimeSetMemoryLimit(int bytes) {
         call("set_memory_limit_runtime_wasm", getPointer(), bytes);
     }
 
-    private void fnInitLogger(int level) {
+    private void fnRuntimeInitLogger(int level) {
         call("init_logger_wasm", level);
     }
 
@@ -577,6 +645,7 @@ public class JSRuntime implements AutoCloseable {
 
     //-------------------------------------------------------------------------
     // Object functions
+    // Note keys are serialized with msgpack (as {"string":nnn} not nnn). Not ideal.
     //-------------------------------------------------------------------------
 
     /**
@@ -612,7 +681,6 @@ public class JSRuntime implements AutoCloseable {
     void fnObjectPut(JSObject object, byte[] key, byte[] value) {
         final JSContext ctx = object.getContext();
         long kptrlen = store(key);
-//        long kptrlen = store(key.getBytes(StandardCharsets.UTF_8));
         long vptrlen = store(value);
         call("object_set_value_wasm", ctx.getPointer(), object.getPointer(), ptrlen2ptr(kptrlen), ptrlen2len(kptrlen), ptrlen2ptr(vptrlen), ptrlen2len(vptrlen));
         dealloc(kptrlen);
@@ -625,7 +693,6 @@ public class JSRuntime implements AutoCloseable {
     byte[] fnObjectGet(JSObject object, byte[] key) {
         final JSContext ctx = object.getContext();
         long ptrlen = store(key);
-//        long ptrlen = store(key.getBytes(StandardCharsets.UTF_8));
         long[] r = call("object_get_value_wasm", ctx.getPointer(), object.getPointer(), ptrlen2ptr(ptrlen), ptrlen2len(ptrlen));
         dealloc(ptrlen);
         ptrlen = r[0];
@@ -640,21 +707,9 @@ public class JSRuntime implements AutoCloseable {
     void fnObjectRemove(JSObject object, byte[] key) {
         final JSContext ctx = object.getContext();
         long ptrlen = store(key);
-//        long ptrlen = store(key.getBytes(StandardCharsets.UTF_8));
         call("object_remove_value_wasm", ctx.getPointer(), object.getPointer(), ptrlen2ptr(ptrlen), ptrlen2len(ptrlen));
         dealloc(ptrlen);
     }
-
-    /**
-     * See if object contains a particular key
-    boolean fnObjectContainsKey(JSObject object, String key) {
-        final JSContext ctx = object.getContext();
-        MemoryLocation k = store(key.getBytes(StandardCharsets.UTF_8));
-        long[] r = call("object_contains_key_wasm", ctx.getPointer(), object.getPointer(), k.getPointer(), k.getLength());
-        dealloc(k);
-        return r[0] != 0;
-    }
-     */
 
     /**
      * Get a list of keys from an object
