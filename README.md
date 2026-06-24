@@ -18,6 +18,8 @@ There are a few projects taking this approach
 * [quickjs-wasm-java](https://github.com/StefanRichterHuber/quickjs-wasm-java), which is the basis for this API. Almost all of the Rust source in this repository was taken directly from that project.
 * [quickjs4j](https://github.com/roastedroot/quickjs4j), which uses [Javy](https://github.com/bytecodealliance/javy)
 
+The advantage is that rather than one-thread-per task, a single thread can be used to interleave operations on multiple contexts - much like `select(2)` in C, in fact.
+
 ## Building
 * Requirements: Java 21+ and Rust
 * There is `pom.xml` for Maven, which is lifted entirely from Stefan Richter-Huber's `quickjs-wasm-java`
