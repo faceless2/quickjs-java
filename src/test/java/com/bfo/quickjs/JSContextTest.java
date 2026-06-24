@@ -29,6 +29,8 @@ public class JSContextTest {
         runtime.getLogger().log(JSRuntime.Logger.DEBUG, msg, args);
     }
 
+    //----------------------------------------------------------------------------
+
     /**
      * All supported java types can be returned from the eval function
      * 
@@ -119,6 +121,8 @@ public class JSContextTest {
         }
     }
 
+    //----------------------------------------------------------------------------
+
     /**
      * Even functions can be returned form the eval function and will be represented
      * as JSFunction in java
@@ -170,6 +174,8 @@ public class JSContextTest {
         }
     }
 
+    //----------------------------------------------------------------------------
+
     /**
      * All supported java types can be set as global values in the JS context
      * 
@@ -212,6 +218,8 @@ public class JSContextTest {
         }
     }
 
+    //----------------------------------------------------------------------------
+
     /**
      * All supported java types can be retrieved from the global quickjs context
      * 
@@ -253,6 +261,8 @@ public class JSContextTest {
             }
         }
     }
+
+    //----------------------------------------------------------------------------
 
     /**
      * JS Object will be just wrapped as JSObject. All modifications on the
@@ -314,6 +324,8 @@ public class JSContextTest {
         }
     }
 
+    //----------------------------------------------------------------------------
+
     /**
      * One can directly create native JS object on the java side using JSObject
      * 
@@ -353,6 +365,8 @@ public class JSContextTest {
 
         }
     }
+
+    //----------------------------------------------------------------------------
 
     /**
      * JS Arrays will be just wrapped as JSArrays. All modifications on the
@@ -405,6 +419,8 @@ public class JSContextTest {
         }
     }
 
+    //----------------------------------------------------------------------------
+
     /**
      * One can create native JS arrays directly on the java side using JSArrays
      * 
@@ -443,6 +459,8 @@ public class JSContextTest {
 
         }
     }
+
+    //----------------------------------------------------------------------------
 
     /**
      * Several java functions can be put into the quickjs context and called as if
@@ -534,6 +552,8 @@ public class JSContextTest {
         }
     }
 
+    //----------------------------------------------------------------------------
+
     /**
      * The runtime of the script can be limited in the Runtime object
      * 
@@ -552,6 +572,8 @@ public class JSContextTest {
         }
     }
 
+    //----------------------------------------------------------------------------
+
     /**
      * The memory consumption of scripts can be limited by the runtime object to
      * prevent faulty scripts to overload the host
@@ -569,6 +591,8 @@ public class JSContextTest {
         }
 
     }
+
+    //----------------------------------------------------------------------------
 
     /**
      * JS exceptions thrown in the script are wrapped as JSException
@@ -598,6 +622,8 @@ public class JSContextTest {
         }
     }
 
+    //----------------------------------------------------------------------------
+
     /**
      * Java exceptions thrown in java callbacks, are wrapped as js exceptions and
      * then wrapped as JSException. The message remains, the call stack is,
@@ -626,6 +652,8 @@ public class JSContextTest {
             }
         }
     }
+
+    //----------------------------------------------------------------------------
 
     /**
      * Invoking a JS function directly from java is possible. Even nested calls to
@@ -678,11 +706,15 @@ public class JSContextTest {
         }
     }
 
+    //----------------------------------------------------------------------------
+
     public interface TestInterface {
         int add(int a, int b);
 
         int substract(int a, int b);
     }
+
+    //----------------------------------------------------------------------------
 
     /**
      * High-level async support is provided. Promises from
@@ -715,6 +747,8 @@ public class JSContextTest {
         }
     }
 
+    //----------------------------------------------------------------------------
+
     /**
      * High-level async support is provided. Promises from
      * {@link JSContext#evalAsync(String)} are wrapped by a
@@ -740,6 +774,8 @@ public class JSContextTest {
         }
     }
 
+    //----------------------------------------------------------------------------
+
     /**
      * High-level async support is provided. Promises from
      * {@link JSContext#evalAsync(String)} are wrapped by a
@@ -763,6 +799,8 @@ public class JSContextTest {
             assertTrue(r1.isCompletedExceptionally());
         }
     }
+
+    //----------------------------------------------------------------------------
 
     /**
      * Completable futures are internally wrapped with promises and can be treated
@@ -808,6 +846,8 @@ public class JSContextTest {
         }
     }
 
+    //----------------------------------------------------------------------------
+
     /**
      * On can return completable futures from java functions and these are treated
      * like promises on the js side
@@ -848,6 +888,8 @@ public class JSContextTest {
         }
     }
 
+    //----------------------------------------------------------------------------
+
     @Test
     public void testPromiseCanDependOnFuture() throws Exception {
         try (JSRuntime runtime = new JSRuntime().setStderr(System.err).setStdout(System.out); JSContext context = runtime.newContext()) {
@@ -874,6 +916,8 @@ public class JSContextTest {
             assertEquals("done", result.get());
         }
     }
+
+    //----------------------------------------------------------------------------
 
     @Test
     public void testComputableValue() throws Exception {
@@ -902,6 +946,115 @@ public class JSContextTest {
             assertEquals("BAR(1)", context.eval("magic.bar = 1; magic.bar"));
             assertEquals("FOO(1)", context.eval("magic.foo"));  // Same value shared over two properties
             assertEquals(2, context.eval("Object.keys(magic).length"));  // Properties are enumerable
+        } finally {
+            runtime.close();
+        }
+    }
+
+    //----------------------------------------------------------------------------
+
+    @JSExport
+    private static class ExportTest {
+        @JSExport public String field1 = "rw-1";                                 // field1 is a read/write field
+        @JSExport public final String field2 = "ro-2";                           // field2 is a read-only field
+        @JSExport(field="field3")  public String myfield3 = "rw-3";              // field3 is a read/write field with a different name
+        @JSExport(hidden=true) public String field4 = "ro-h-4";                  // field4 is a hidden read/write field;
+        private String myfield5 = "rw-5";
+        @JSExport(field="field5") public String getField4() {                    // field5 is a read/write field using getter/setter
+            return myfield5;
+        }
+        @JSExport(field="field5") public void setField4(String value) {
+            myfield5 = value;
+        }
+        @JSExport(field="field6") public String getField6() {                   // field6 is a read-only field using getter
+            return "ro-6";
+        }
+        @JSExport(field="field7",hidden=true) public String getField7() {       // field7 is a hidden read-only field using a getter
+            return "ro-h-7";
+        }
+        String myfield8 = "rw-d-8";
+        @JSExport(field="field8",deleteable=true) public String getField8() {   // field8 is a deleteable read-only field using a getter
+            return myfield8;
+        }
+        @JSExport(field="field8",deleteable=true) public void setField8(String value) {   // field8 is a deleteable read-write field using a getter/setter
+            myfield8 = value;
+        }
+        // Methods
+        @JSExport int add(int a, int b) {                                       // call with add(1, 2)
+            return a + b;
+        }
+        @JSExport float addAll(float... v) {                                    // call with addAll(1, 2.0, 3)
+            float t = 0;
+            for (int i=0;i<v.length;i++) t += v[i];
+            return t;
+        }
+        @JSExport String cat(Object... v) {                                     // call with cat(1, true, "three", [4,"five"],{"six":7},null);
+            return Arrays.toString(v);
+        }
+        @JSExport String catArray(Object[] v) {                                 // call with catArray([1, true, "three", [4,"five"],{"six":7},null]);
+            return Arrays.toString(v);
+        }
+        @JSExport String catList(List<Object> v) {                              // as above
+            return v.toString();
+        }
+    }
+
+    @Test
+    public void testExport() throws Exception {
+        JSRuntime runtime = new JSRuntime().setStderr(System.err).setStdout(System.out);
+        JSContext ctx = runtime.newContext();
+        try {
+            ExportTest test = new ExportTest();
+            ctx.put("test", test);
+            // Test fields
+            assertEquals("rw-1", ctx.eval("test.field1"));
+            assertEquals("ro-2", ctx.eval("test.field2"));
+            assertEquals("rw-3", ctx.eval("test.field3"));
+            assertEquals("ro-h-4", ctx.eval("test.field4"));
+            assertEquals("rw-5", ctx.eval("test.field5"));
+            assertEquals("ro-6", ctx.eval("test.field6"));
+            assertEquals("ro-h-7", ctx.eval("test.field7"));
+            assertEquals("rw-d-8", ctx.eval("test.field8"));
+            assertEquals("add,addAll,cat,catArray,catList,field1,field2,field3,field5,field6,field8", ctx.eval("Object.keys(test).sort().toString()"));    // hidden fields are hidden
+            assertEquals("mod1", ctx.eval("test.field1 = \"mod1\"; test.field1"));      // rw fields can be updated
+            assertEquals("1", ctx.eval("test.field1 = 1; test.field1"));                // rw fields can be updated with type conversion
+            assertEquals("[1, 2]", ctx.eval("test.field1 = [1,2]; test.field1"));       // rw fields can be updated with type conversion
+            assertEquals(null, ctx.eval("test.field1 = null; test.field1"));            // rw fields can be updated with null value
+            assertEquals("mod1", ctx.eval("test.field3 = \"mod1\"; test.field3"));      // rw fields can be updated
+            assertEquals("1", ctx.eval("test.field3 = 1; test.field3"));                // as above but for renamed field
+            assertEquals("[1, 2]", ctx.eval("test.field3 = [1,2]; test.field3"));       // 
+            assertEquals(null, ctx.eval("test.field3 = null; test.field3"));            //
+            assertEquals("mod1", ctx.eval("test.field5 = \"mod1\"; test.field5"));      //
+            assertEquals("1", ctx.eval("test.field5 = 1; test.field5"));                // as above but using getter/setter
+            assertEquals("[1, 2]", ctx.eval("test.field5 = [1,2]; test.field5"));       //
+            assertEquals(null, ctx.eval("test.field5 = null; test.field5"));            //
+            try {
+                ctx.eval("test.field2 = 1");                                            // ro fields can not be updated
+                fail("Value should be read-only");
+            } catch (Exception e) {
+                assertEquals("no setter for property", e.getMessage());
+            }
+            try {
+                ctx.eval("test.field6 = \"foo\"");                                      // ro pseudo-fields with method can not be updated
+                fail("Value should be read-only");
+            } catch (Exception e) {
+                assertEquals("no setter for property", e.getMessage());
+            }
+            ctx.eval("delete test.field8");                                             // a deletable property can be deleted,
+            assertNull(ctx.eval("test.field8"));                                        // and when it is it has no value in JavaScript.
+            ctx.eval("test.field8 = 1");                                                // recreated the value is allowed, but the JS
+            assertEquals(1, ctx.eval("test.field8"));                                   // and Java values are no longer linked
+            assertEquals("rw-d-8", test.getField8());
+
+            // Test method calls
+            assertEquals(3, ctx.eval("test.add(1,2)"));                                 // simple calls with various type coercions
+            assertEquals(3, ctx.eval("test.add(true,2)"));
+            assertEquals(3, ctx.eval("test.add(true,2.0)"));
+            assertEquals(3, ctx.eval("test.add(true,\"2\")"));
+            assertEquals(15, ctx.eval("test.addAll(1, 2, 3, 4, 5)"));                   // varargs
+            assertEquals("[1, foo, false, [1, 2], {foo=1}, null]", ctx.eval("test.cat(1,\"foo\",false,[1,2],{\"foo\":1},null)"));       // varargs
+            assertEquals("[1, foo, false, [1, 2], {foo=1}, null]", ctx.eval("test.catArray([1,\"foo\",false,[1,2],{\"foo\":1},null])"));
+            assertEquals("[1, foo, false, [1, 2], {foo=1}, null]", ctx.eval("test.catList([1,\"foo\",false,[1,2],{\"foo\":1},null])"));
         } finally {
             runtime.close();
         }

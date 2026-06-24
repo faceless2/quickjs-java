@@ -108,6 +108,9 @@ public class JSObject extends AbstractMap<String,Object> implements JSType, Auto
         if (value instanceof JSComputedValue) {
             JSComputedValue cv = (JSComputedValue) value;
             Function<List<Object>,Object> getter = new Function<>() {
+                public String toString() {
+                    return "wrapper(getter(" + cv + "))";
+                }
                 public Object apply(List<Object> args) {
                     JSType target = (JSType)args.get(0);
                     Object key = args.get(1);
@@ -122,20 +125,21 @@ public class JSObject extends AbstractMap<String,Object> implements JSType, Auto
             if (hassetter) {
                 // Setter is overridden
                 setter = new Function<>() {
+                    public String toString() {
+                        return "wrapper(setter(" + cv + "))";
+                    }
                     public Object apply(List<Object> args) {
                         JSType target = (JSType)args.get(0);
                         Object key = args.get(1);
                         Object value = args.get(2);
-                        if (!cv.set(target, key, value)) {
-                            throw new IllegalArgumentException("Invalid value");
-                        }
-                        return true;
+                        cv.set(target, key, value);
+                        return null;
                     }
                 };
             }
             int getptr = ctx.registerProxy(getter);
             int setptr = setter == null ? 0 : ctx.registerProxy(setter);
-            int flags = (cv.isEnumerable() ? 1 : 0) + (cv.isDeleteable() ? 2 : 0);
+            int flags = (cv.isHidden() ? 0 : 1) + (cv.isDeleteable() ? 2 : 0);
             ctx.getRuntime().fnObjectDefineProperty(this, ctx.pack(key), getptr, setptr, flags);
         } else {
             ctx.getRuntime().fnObjectPut(this, ctx.pack(key), ctx.pack(value));
@@ -159,7 +163,6 @@ public class JSObject extends AbstractMap<String,Object> implements JSType, Auto
         @Override public Object getValue() {
             if (value == UNSET) {
                 byte[] b = ctx.pack(key);
-                if (b.length == 0) throw new Error("KEY="+key);
                 value = ctx.unpack(ctx.getRuntime().fnObjectGet(JSObject.this, ctx.pack(key)));
             }
             if (value instanceof RuntimeException) {

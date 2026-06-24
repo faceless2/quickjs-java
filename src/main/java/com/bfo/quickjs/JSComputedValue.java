@@ -20,18 +20,17 @@ public interface JSComputedValue {
      * @param owner the owner object (currently, will always be a JSObject)
      * @param key the key
      * @param value the key
-     * @return whether the value was set. Default implementation returns false
+     * @throws RuntimeException if the value is invalid
      */
-    public default boolean set(JSType owner, Object key, Object value) {
-         return false;
+    public default void set(JSType owner, Object key, Object value) {
     }
 
     /**
-     * Return true if this property should be enumerated in the object key set
-     * @return true if the property is enumerable (default to true)
+     * Return true if this property should be hidden in the object key set
+     * @return true if the property is hidden (default to false)
      */
-    public default boolean isEnumerable() {
-        return true;
+    public default boolean isHidden() {
+        return false;
     }
 
     /**
@@ -39,7 +38,7 @@ public interface JSComputedValue {
      * @return true if the property is deletable (default to false)
      */
     public default boolean isDeleteable() {
-        return true;
+        return false;
     }
 
 }

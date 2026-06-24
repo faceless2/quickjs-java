@@ -4,6 +4,7 @@ import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.*;
+import java.lang.reflect.*;
 import org.msgpack.core.*;
 import org.msgpack.value.*;
 
@@ -43,7 +44,9 @@ class Packer {
 
     @SuppressWarnings("unchecked")
     private Object prepack(final Object o) {
-        if (o instanceof Supplier) {
+        if (o == null) {
+            return null;
+        } else if (o instanceof Supplier) {
             return new Function<List<Object>,Object>() { @Override public Object apply(List<Object> args) { return ((Supplier)o).get(); } };
         } else if (o instanceof Consumer) {
             return new Function<List<Object>,Object>() { @Override public Object apply(List<Object> args) { ((Consumer)o).accept(args.get(0)); return null; } };
@@ -51,6 +54,12 @@ class Packer {
             return new Function<List<Object>,Object>() { @Override public Object apply(List<Object> args) { ((BiConsumer)o).accept(args.get(0), args.get(1)); return null; } };
         } else if (o instanceof BiFunction) {
             return new Function<List<Object>,Object>() { @Override public Object apply(List<Object> args) { return ((BiFunction)o).apply(args.get(0), args.get(1)); } };
+        } else if (o.getClass().isAnnotationPresent(JSExport.class)) {
+            return ctx.getExportProxies().computeIfAbsent(o, new Function<Object,JSObject>() {
+                public JSObject apply(Object o) {
+                    return fromJSExport(o);
+                }
+            });
         }
         return o;
     }
@@ -130,7 +139,7 @@ class Packer {
                 p.packInt(index);
                 p.packLong(promisePtr);
             } else {
-                throw new IllegalArgumentException("Unable to pack object of type " + o.getClass().getName());
+                throw new IllegalArgumentException("Unable to pack object of type \"" + o.getClass().getName() + "\"");
             }
         }
     }
@@ -216,4 +225,226 @@ class Packer {
             throw new IllegalArgumentException("Unexpected type " + type);
         }
     }
+
+    /**
+     * Given an object that is annotated with @JSExport, return a new JSObject
+     * which will mirror any values set on it to the fields and methods annotated
+     * with @JSExport
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    JSObject fromJSExport(final Object object) {
+        Class c = object.getClass();
+        if (c.isAnnotationPresent(JSExport.class)) {
+            final JSObject output = ctx.newObject();
+            final Map<String,FieldProp> map = new LinkedHashMap<String,FieldProp>();
+            for (Field f : c.getDeclaredFields()) {
+                if (f.canAccess(object) && f.isAnnotationPresent(JSExport.class) && (f.getModifiers() & Modifier.STATIC) == 0) {
+                    JSExport export = f.getAnnotation(JSExport.class);
+                    String name = export.field().equals("") ? f.getName() : export.field();
+                    if (output.containsKey(name) || map.containsKey(name)) {
+                        throw new IllegalStateException("Duplicate name \"" + name + "\"");
+                    }
+                    FieldProp prop = new FieldProp();
+                    map.put(name, prop);
+                    prop.getter = f;
+                    if ((f.getModifiers() & Modifier.FINAL) == 0) {
+                        prop.setter = f;
+                    }
+                    if (export.hidden()) {
+                        prop.hidden = true;
+                    }
+                    if (export.deleteable()) {
+                        prop.deleteable = true;
+                    }
+                }
+            }
+            for (Method m : c.getDeclaredMethods()) {
+                if ((m.getModifiers() & (Modifier.STATIC|Modifier.ABSTRACT)) == 0 && m.isAnnotationPresent(JSExport.class) && m.canAccess(object)) {
+                    JSExport export = m.getAnnotation(JSExport.class);
+                    final Method method = m;
+                    if (export.field().equals("")) {        // export as a method
+                        final String name = method.getName();
+                        if (output.containsKey(name) || map.containsKey(name)) {
+                            throw new IllegalStateException("Duplicate name \"" + name + "\"");
+                        }
+                        output.put(name, new Function<List<Object>,Object>() {
+                            public String toString() {
+                                return "[Function that calls \"" + name + "\"]";
+                            }
+                            public Object apply(List<Object> args) {
+                                Class[] types = method.getParameterTypes();
+                                Object[] values = new Object[types.length];
+                                for (int i=0;i<args.size();i++) {
+                                    if (i == types.length - 1 && method.isVarArgs()) {
+                                        // final parameter is X[] - take all remaining parameters and put into Array of X
+                                        Class c = types[i].getComponentType();
+                                        int l = args.size() - i;
+                                        Object a = values[i] = Array.newInstance(c, l);
+                                        for (int j=0;j<l;j++) {
+                                            Array.set(a, j, marshall(c, args.get(i++)));
+                                        }
+                                    } else {
+                                        values[i] = marshall(types[i], args.get(i));
+                                    }
+                                }
+                                try {
+                                    return method.invoke(object, values);
+                                } catch (InvocationTargetException e) {
+                                    e.printStackTrace();
+                                    Throwable e2 = e.getCause();
+                                    if (!(e2 instanceof RuntimeException)) {
+                                        e2 = new RuntimeException(e2);
+                                    }
+                                    throw (RuntimeException)e2;
+                                } catch (Exception e) {
+                                    e.printStackTrace();
+                                    throw new RuntimeException(e);
+                                }
+                            }
+                        });
+                    } else {
+                        final String name = export.field();
+                        if (output.containsKey(name)) {
+                            throw new IllegalStateException("Duplicate name \"" + name + "\"");
+                        }
+                        FieldProp prop = map.computeIfAbsent(name, k -> new FieldProp());
+                        if (method.getParameterTypes().length == 0 && method.getReturnType() != Void.TYPE) {
+                            if (prop.getter == null) {
+                                prop.getter = method;
+                            } else {
+                                throw new IllegalStateException("Duplicate getter \"" + name + "\"");
+                            }
+                        } else if (method.getParameterTypes().length == 1 && method.getReturnType() == Void.TYPE) {
+                            if (prop.setter == null) {
+                                prop.setter = method;
+                            } else {
+                                throw new IllegalStateException("Duplicate setter \"" + name + "\"");
+                            }
+                        } else {
+                            throw new IllegalStateException("Method \"" + method.getName() + "\" annotated with field=\"" + name + "\" but not a getter or setter");
+                        }
+                        if (export.hidden()) {
+                            prop.hidden = true;
+                        }
+                        if (export.deleteable()) {
+                            prop.deleteable = true;
+                        }
+                    }
+                }
+            }
+            for (Map.Entry<String,FieldProp> e : map.entrySet()) {
+                final String name = e.getKey();
+                final FieldProp p = e.getValue();
+                if (p.getter == null) {
+                    throw new IllegalStateException("Property \"" + name + "\" has setter but no getter");
+                } else {
+                    JSComputedValue cv = new JSComputedValue() {
+                        public String toString() {
+                            return "[JSComputedValue getter for \"" + name + "\"]";
+                        }
+                        @Override public Object get(JSType owner, Object key) {
+                            try {
+                                if (p.getter instanceof Field) {
+                                    return ((Field)p.getter).get(object);
+                                } else {
+                                    return ((Method)p.getter).invoke(object);
+                                }
+                            } catch (InvocationTargetException e) {
+                                Throwable e2 = e.getCause();
+                                if (!(e2 instanceof RuntimeException)) {
+                                    e2 = new RuntimeException(e2);
+                                }
+                                throw (RuntimeException)e2;
+                            } catch (Exception e) {
+                                throw new RuntimeException(e);
+                            }
+                        }
+                        @Override public boolean isHidden() {
+                            return p.hidden;
+                        }
+                        @Override public boolean isDeleteable() {
+                            return p.deleteable;
+                        }
+                    };
+                    if (p.setter != null) {
+                        final JSComputedValue fcv = cv;
+                        cv = new JSComputedValue() {
+                            public String toString() {
+                                return "[JSComputedValue getter/setter for \"" + name + "\"]";
+                            }
+                            @Override public Object get(JSType owner, Object key) {
+                                return fcv.get(owner, key);
+                            }
+                            @Override public void set(JSType owner, Object key, Object value) {
+                                try {
+                                    if (p.setter instanceof Field) {
+                                        ((Field)p.setter).set(object, marshall(((Field)p.setter).getType(), value));
+                                    } else {
+                                        ((Method)p.setter).invoke(object, marshall(((Method)p.setter).getParameterTypes()[0], value));
+                                    }
+                                } catch (InvocationTargetException e) {
+                                    Throwable e2 = e.getCause();
+                                    if (!(e2 instanceof RuntimeException)) {
+                                        e2 = new RuntimeException(e2);
+                                    }
+                                    throw (RuntimeException)e2;
+                                } catch (Exception e) {
+                                    throw new RuntimeException(e);
+                                }
+                            }
+                            @Override public boolean isHidden() {
+                                return fcv.isHidden();
+                            }
+                            @Override public boolean isDeleteable() {
+                                return fcv.isDeleteable();
+                            }
+                        };
+                    }
+                    output.put(e.getKey(), cv);
+                }
+            }
+            return output;
+        } else {
+            throw new IllegalArgumentException("Object not a known type and not annotated with @JSExport");
+        }
+    }
+    private static class FieldProp {
+        Member getter, setter;
+        boolean hidden, deleteable;
+    }
+
+    /**
+
+     * Given an Object of any type, try and marshall it into an object of the specified class.
+     * Can convert Boolean, Number and String, and arrays of those values.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Object marshall(Class c, Object v) {
+        if (v == null) {
+            return v;
+        } else if (c.isArray()) {
+            List l = v instanceof List ? (List)v : List.of(v);
+            c = c.getComponentType();
+            Object a = Array.newInstance(c, l.size());
+            for (int i=0;i<l.size();i++) {
+                Array.set(a, i, marshall(c, l.get(i)));
+            }
+            return a;
+        } else if (c == Boolean.class) {
+            return v instanceof Number ? ((Number)v).floatValue() != 0 : "true".equals(v.toString());
+        } else if (c == String.class) {
+            return v.toString();
+        } else if (c == Integer.class || c == Integer.TYPE) {
+            return v instanceof Number ? Integer.valueOf(((Number)v).intValue()) : Integer.parseInt(v instanceof Boolean ? (((Boolean)v).booleanValue()?"1":"0"):v.toString());
+        } else if (c == Long.class || c == Long.TYPE) {
+            return v instanceof Number ? Long.valueOf(((Number)v).longValue()) : Long.parseLong(v instanceof Boolean ? (((Boolean)v).booleanValue()?"1":"0"):v.toString());
+        } else if (c == Float.class || c == Float.TYPE) {
+            return v instanceof Number ? Float.valueOf(((Number)v).floatValue()) : Float.parseFloat(v instanceof Boolean ? (((Boolean)v).booleanValue()?"1":"0"):v.toString());
+        } else if (c == Double.class || c == Double.TYPE) {
+            return v instanceof Number ? Double.valueOf(((Number)v).doubleValue()) : Double.parseDouble(v instanceof Boolean ? (((Boolean)v).booleanValue()?"1":"0"):v.toString());
+        } else {
+            return v;
+        }
+    }
+
 }

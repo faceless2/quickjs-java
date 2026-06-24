@@ -11,6 +11,7 @@ public class JSFunction implements JSType {
     final long pointer;
     final String name;
     private Boolean constructor;
+    private int index;
 
     JSFunction(JSContext ctx, String name, long pointer) {
         this.ctx = ctx;
@@ -28,6 +29,10 @@ public class JSFunction implements JSType {
 
     @Override public JSContext getContext() {
         return ctx;
+    }
+
+    void setIndex(int index) {
+        this.index = index;
     }
 
     /** 
@@ -61,5 +66,9 @@ public class JSFunction implements JSType {
         byte[] data = ctx.pack(List.of(args));
         data = ctx.getRuntime().fnFunctionConstruct(this, data);
         return ctx.unpack(data);
+    }
+
+    public String toString() {
+        return "{JSFunction " + ctx.getPointer() + "/" + index + "}";
     }
 }

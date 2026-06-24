@@ -14,6 +14,7 @@ public class JSContext implements AutoCloseable {
     private final JSRuntime runtime;
     private final List<AutoCloseable> closeables = new ArrayList<>();   // Dependents that are closed when we're closed
     private final List<Object> proxies = new ArrayList<>();
+    private final Map<Object,JSObject> exportProxies = new HashMap<>(); // Map of @JSExport-implementing-Object => JSObject
     private final Packer packer;
     private final Deque<Runnable> pollqueue = new ConcurrentLinkedDeque<Runnable>();
     private long pointer;
@@ -80,6 +81,10 @@ public class JSContext implements AutoCloseable {
         return (T)o;
     }
 
+    Map<Object,JSObject> getExportProxies() {
+        return exportProxies;
+    }
+
     int registerProxy(Object o) {
         if (o == null) {
             throw new NullPointerException();
@@ -89,6 +94,9 @@ public class JSContext implements AutoCloseable {
             return ix;
         }
         ix = proxies.size();
+        if (o instanceof JSFunction) {
+            ((JSFunction)o).setIndex(ix);       // only for debug
+        }
         proxies.add(o);
         return ix;
     }
