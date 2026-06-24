@@ -234,6 +234,19 @@ assert o1 == o2;  // No! Different object each time. See https://github.com/face
 
 ctx.put("myobject", o3);
 asssert ctx.get("myobject") == o3;  // Still no! Same problem.
+
+// JavaScript is complicated! This seems to be by design. Be careful.
+cctx.eval("var x = 1; globalThis.y = 2; let z = 3");
+assert ctx.containsKey("x");
+assert ctx.containsKey("y");
+assert !ctx.containsKey("z");
+ctx.remove("x");
+ctx.remove("y");
+assert !ctx.containsKey("x");
+assert !ctx.containsKey("y");
+assert "number".equals(ctx.eval("typeof x"));
+assert "undefined".equals(ctx.eval("typeof y"));
+assert "number".equals(ctx.eval("typeof z"));
 ```
 Fixes here require changes at the Rust layer which are beyond my abililty - assistance welcome.
 
