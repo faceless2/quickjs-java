@@ -19,6 +19,8 @@ public class JSContext implements AutoCloseable {
     private final Deque<Runnable> pollqueue = new ConcurrentLinkedDeque<Runnable>();
     private long pointer;
     private int generation;
+    private JSException pendingRejection;
+    private boolean pendingRejectionHandled;
 
 
     JSContext(JSRuntime runtime) {
@@ -207,6 +209,14 @@ public class JSContext implements AutoCloseable {
         return getRuntime().fnPoll(this);
     }
 
+    void pollAfterPromise(CompletableFuture<?> f) {
+        getRuntime().fnPoll(this);
+        if (pendingRejection != null && f != null) {
+            f.completeExceptionally(pendingRejection);
+            pendingRejection = null;
+        }
+    }
+
     /**
      * Eval the supplied script and return the result.
      * @param script the script
@@ -222,21 +232,50 @@ public class JSContext implements AutoCloseable {
     }
 
     /**
-     * Eval the supplied script asynchronousely and return the result as a {@link JSPromise}
+     * Eval the supplied script asynchronously and return the result as a {@link JSPromise}
      * @param script the script
      */
     public JSPromise evalAsync(String script) {
+        pendingRejection = null;
         prepoll();
+        int size = proxies.size();
         byte[] data = getRuntime().fnEvalScriptAsync(this, script);
         Object o = unpack(data);
         if (o instanceof RuntimeException) {
             throw (RuntimeException)o;
         }
-        return (JSPromise)o;
+        JSPromise promise = (JSPromise)o;
+        if (pendingRejection != null) {
+            // We've *already* had an exception from JS - we would see this
+            // if the script was (eg) "throw Error()". Fail the promise now.
+            if (pendingRejectionHandled) {
+                promise.notifyCompletedByJS();
+            }
+            promise.completeExceptionally(pendingRejection);
+            pendingRejection = null;
+        } else {
+            // Any promises created after the call to evalAsync need to be told that THIS
+            // promise is the "final stage". Any unhandled exceptions seen when resolving
+            // one of them must fail the final stage.
+            for (int i=size;i<proxies.size();i++) {
+                if (proxies.get(i) instanceof JSPromise && proxies.get(i) != promise) {
+                    ((JSPromise)proxies.get(i)).setFinalStage(promise);
+                }
+            }
+        }
+        return promise;
     }
 
     int getGeneration() {
         return generation;
+    }
+
+    /**
+     * Called by the JS if an unhandled exception occurs during an async method call
+     */
+    void handleRejectedPromise(byte[] data, boolean handled) {
+        pendingRejection = (JSException)unpack(data);
+        pendingRejectionHandled = handled;
     }
 
 }

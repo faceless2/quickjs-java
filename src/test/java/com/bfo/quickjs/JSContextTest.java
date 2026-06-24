@@ -811,8 +811,7 @@ public class JSContextTest {
             CompletableFuture<Object> r1 = context.evalAsync("throw Err('hello') ");
 
             assertNotNull(r1);
-            assertFalse(r1.isDone());
-            while (context.poll()) {
+            while (!r1.isDone() && context.poll()) {
                 Thread.sleep(10);
             }
             assertTrue(r1.isCompletedExceptionally());
@@ -935,6 +934,39 @@ public class JSContextTest {
             assertEquals("done", result.get());
         }
     }
+
+    @Test
+    public void testPromiseErrorInFuture() throws Exception {
+        JSRuntime runtime = new JSRuntime().setStderr(System.err).setStdout(System.out);
+        JSContext context = runtime.newContext();
+        try {
+            context.put("answer", new Supplier<Object>() {
+                public Object get() {
+                    final CompletableFuture<Object> future = new CompletableFuture<>();
+                    new Thread(new Runnable() {
+                        public void run() {
+                            try { Thread.sleep(500); } catch (Exception e) {}
+                            runtime.getLogger().log(JSRuntime.Logger.DEBUG, "Completing future in background thread");
+                            future.complete("done");
+                        }
+                    }).start();
+                    return future;
+                }
+            });
+            CompletableFuture<?> result = context.evalAsync("await new Promise((resolve) => { answer().then(x => { throw new Error(\"failed\"); } ) })");
+            while (!result.isDone()) {
+                context.poll();
+                Thread.sleep(100);
+            }
+            result.get();
+            fail("Should have failed");
+        } catch (Exception e) {
+            assertEquals("failed", e.getCause().getMessage());
+        } finally {
+            runtime.close();
+        }
+    }
+
 
     //----------------------------------------------------------------------------
 

@@ -348,7 +348,10 @@ public class JSRuntime implements AutoCloseable {
                     (Instance instance, long... args) -> { return new long[] { fnCreateCompletableFuture(args[0], args[1]) }; }),
 
                 createHostFunction("env", "complete_completable_future", List.of(ValType.I64, ValType.I32, ValType.I32, ValType.I32, ValType.I32), List.of(ValType.I64),
-                    (Instance instance, long... args) -> { fnCompleteCompletableFuture(args[0], (int)args[1], (int)args[2], (int)args[3], (int)args[4]); return new long[] { 0 }; })
+                    (Instance instance, long... args) -> { fnCompleteCompletableFuture(args[0], (int)args[1], (int)args[2], (int)args[3], (int)args[4]); return new long[] { 0 }; }),
+
+                createHostFunction("env", "handle_rejected_promise", List.of(ValType.I64, ValType.I64, ValType.I32, ValType.I32, ValType.I32), List.of(),
+                    (Instance instance, long... args) -> { fnHandleRejectedPromise(args[0], args[1], (int)args[2], (int)args[3], args[4] != 0); return new long[] { 0 }; })
 
             });
             WasmModule module = WasmLib.load();
@@ -521,6 +524,15 @@ public class JSRuntime implements AutoCloseable {
         dealloc(ptr, len);
         getLogger().log(level, new String(data, StandardCharsets.UTF_8));
     }
+
+    private void fnHandleRejectedPromise(long contextPtr, long promisePtr, int ptr, int len, boolean isHandled) {
+        JSContext ctx = getContext(contextPtr);
+        JSPromise promise = ctx.newPromise(promisePtr);
+        byte[] data = fetch(ptr, len);
+        dealloc(ptr, len);
+        ctx.handleRejectedPromise(data, isHandled);
+    }
+
 
     //-------------------------------------------------------------------------
     // Runtime functions
