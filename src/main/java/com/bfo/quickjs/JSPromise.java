@@ -25,21 +25,8 @@ public class JSPromise extends CompletableFuture<Object> implements JSType, Auto
         handle(new BiFunction<Object,Throwable,Object>() {
             public Object apply(final Object value, final Throwable ex) {
                 if (!promiseCompleted) {
-                    ctx.pollQueue(new Runnable() {
-                        public void run() {
-                            if (ex != null) {
-                                ctx.getRuntime().getLogger().log(JSRuntime.Logger.DEBUG, "JS promise {} rejected", pointer, ex);
-                                byte[] data = ctx.pack(ex);
-                                ctx.getRuntime().fnPromiseResolve(JSPromise.this, data);
-                            } else {
-                                ctx.getRuntime().getLogger().log(JSRuntime.Logger.DEBUG, "JS promise {} resolved: {}", pointer, value);
-                                byte[] data = ctx.pack(value);
-                                ctx.getRuntime().fnPromiseResolve(JSPromise.this, data);
-                            }
-                            ctx.pollAfterPromise(finalStage);
-                            finalStage = null;
-                        }
-                    });
+                    ctx.notifyPromiseCompleted(JSPromise.this, value, ex, finalStage);
+                    finalStage = null;
                 }
                 return null;
             }
@@ -105,7 +92,9 @@ context.poll() is called on the main thread.
   previously queued task is run and JS is notified the promise is completed.
   poll() is called.
     if poll() errors, it calls JSRuntime.fnHandleRejectedPromise(), which sets context.pendingRejection
-  poll completes. Was context.pendingRejection set? If so, reject the final promise: C
+    Was context.pendingRejection set? If so, reject the final promise: C
+    repeat until poll is complete
+  done
 
 Clear as mud!
 

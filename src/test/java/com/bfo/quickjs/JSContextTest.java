@@ -909,7 +909,42 @@ public class JSContextTest {
     //----------------------------------------------------------------------------
 
     @Test
-    public void testPromiseCanDependOnFuture() throws Exception {
+    public void testPromiseCanDependOnFutureDirect() throws Exception {
+        try (JSRuntime runtime = new JSRuntime().setStderr(System.err).setStdout(System.out); JSContext context = runtime.newContext()) {
+
+            final Object[] answer = { null };
+            context.put("store", new Consumer<Object>() {
+                @Override public void accept(Object o) {
+                    answer[0] = o;
+                }
+            });
+            context.put("answer", new Supplier<Object>() {
+                public Object get() {
+                    final CompletableFuture<Object> future = new CompletableFuture<>();
+                    new Thread(new Runnable() {
+                        public void run() {
+                            try { Thread.sleep(500); } catch (Exception e) {}
+                            runtime.getLogger().log(JSRuntime.Logger.DEBUG, "Completing future in background thread");
+                            future.complete("done");
+                        }
+                    }).start();
+                    return future;
+                }
+            });
+
+            CompletableFuture<?> result = (CompletableFuture<?>)context.eval("answer().then(x => \"all \" + x).then(store)");
+            while (!result.isDone()) {
+                context.poll();
+                Thread.sleep(100);
+            }
+            assertEquals("all done", answer[0]);
+        }
+    }
+
+    //----------------------------------------------------------------------------
+
+    @Test
+    public void testPromiseCanDependOnFutureAsync() throws Exception {
         try (JSRuntime runtime = new JSRuntime().setStderr(System.err).setStdout(System.out); JSContext context = runtime.newContext()) {
 
             context.put("answer", new Supplier<Object>() {
@@ -935,8 +970,44 @@ public class JSContextTest {
         }
     }
 
+    //----------------------------------------------------------------------------
+
     @Test
-    public void testPromiseErrorInFuture() throws Exception {
+    public void testPromiseErrorInFutureDirect() throws Exception {
+        JSRuntime runtime = new JSRuntime().setStderr(System.err).setStdout(System.out);
+        JSContext context = runtime.newContext();
+        try {
+            context.put("answer", new Supplier<Object>() {
+                public Object get() {
+                    final CompletableFuture<Object> future = new CompletableFuture<>();
+                    new Thread(new Runnable() {
+                        public void run() {
+                            try { Thread.sleep(500); } catch (Exception e) {}
+                            runtime.getLogger().log(JSRuntime.Logger.DEBUG, "Completing future in background thread");
+                            future.complete("done");
+                        }
+                    }).start();
+                    return future;
+                }
+            });
+            CompletableFuture<?> result = (CompletableFuture<?>)context.eval("answer().then(x => { throw new Error(\"failed\"); } )");
+            while (!result.isDone()) {
+                context.poll();
+                Thread.sleep(100);
+            }
+            result.get();
+            fail("Should have failed");
+        } catch (Exception e) {
+            assertEquals("Promise rejected", e.getCause().getMessage());
+        } finally {
+            runtime.close();
+        }
+    }
+
+    //----------------------------------------------------------------------------
+
+    @Test
+    public void testPromiseErrorInFutureAsync() throws Exception {
         JSRuntime runtime = new JSRuntime().setStderr(System.err).setStdout(System.out);
         JSContext context = runtime.newContext();
         try {

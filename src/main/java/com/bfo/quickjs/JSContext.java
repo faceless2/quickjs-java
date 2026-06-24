@@ -209,12 +209,36 @@ public class JSContext implements AutoCloseable {
         return getRuntime().fnPoll(this);
     }
 
-    void pollAfterPromise(CompletableFuture<?> f) {
-        getRuntime().fnPoll(this);
-        if (pendingRejection != null && f != null) {
-            f.completeExceptionally(pendingRejection);
-            pendingRejection = null;
-        }
+    /**
+     * Called on any thread to notify the JS engine that a promise has completed.
+     * Queues a task to run on next call to poll()
+     * @param result the result
+     * @param ex if not null, the promise was rejected
+     * @param finalStage if an uncaught exception is thrown as a result of a poll following the
+     * promise notification, fail that promise.
+     */
+    void notifyPromiseCompleted(final JSPromise promise, final Object value, final Throwable ex, final CompletableFuture<?> finalStage) {
+        final JSContext ctx = this;
+        pollQueue(new Runnable() {
+            public void run() {
+                if (ex != null) {
+                    byte[] data = pack(ex);
+                    getRuntime().fnPromiseResolve(promise, data);
+                } else {
+                    byte[] data = pack(value);
+                    getRuntime().fnPromiseResolve(promise, data);
+                }
+                CompletableFuture<?> localFinalStage = finalStage;
+                while (localFinalStage != null && getRuntime().fnPoll(ctx)) {
+                    generation++;
+                    if (pendingRejection != null) {
+                        localFinalStage.completeExceptionally(pendingRejection);
+                        localFinalStage = null;
+                        pendingRejection = null;
+                    }
+                }
+            }
+        });
     }
 
     /**
