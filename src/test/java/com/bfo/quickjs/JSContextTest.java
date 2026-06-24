@@ -714,6 +714,25 @@ public class JSContextTest {
         int substract(int a, int b);
     }
 
+   /**
+     * JS objects can be retrieved from the QuickJS context and mapped to java
+     * interfaces. This way the JS object can be used as if it implements a java
+     * interface.
+     *
+     * @throws Exception
+     */
+    @Test
+    public void mapJSObjectToJavaInterface() throws Exception {
+        try (JSRuntime runtime = new JSRuntime().setStderr(System.err).setStdout(System.out);JSContext context = runtime.newContext()) {
+            JSObject obj = (JSObject) context.eval(
+                    "let obj = {add: function(a, b) { return a + b; }, substract: function(a, b) { return a - b; }}; obj");
+            assertNotNull(obj);
+            TestInterface testInterface = obj.as(TestInterface.class);
+            assertEquals(3, testInterface.add(1, 2));
+            assertEquals(1, testInterface.substract(2, 1));
+        }
+    }
+
     //----------------------------------------------------------------------------
 
     /**
