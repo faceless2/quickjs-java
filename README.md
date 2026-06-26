@@ -19,7 +19,7 @@ There are a few projects taking this approach
 * [quickjs4j](https://github.com/roastedroot/quickjs4j), which uses [Javy](https://github.com/bytecodealliance/javy)
 
 The advantage is that rather than one-thread-per task, a single thread can be used to interleave operations on multiple runtimes,
-much like `select(2)` in C. **QuickJS Java** has been tested with 1000 runtimes, all waiting on promises, all from a single Java thread.
+much like `select(2)`. **QuickJS Java** has been tested with 1000 runtimes, all waiting on promises, all from a single Java thread.
 
 ## Building
 * Requirements: Java 21+ and Rust
@@ -132,7 +132,7 @@ ctx.evalNow("person.min(5,4,9,1,3)");                                      // = 
 ### Async
 
 The examples so far have called `Object result = ctx.evalNow(script)`, which executes the code and waits for a response.
-In general it is a better idea to call `CompletableFuture<Object> result = ctx.eval(script)`. This will return a Future
+In general it is a better idea to call `CompletableFuture<Object> result = ctx.eval(script)`. This immediately returns a Future
 that will evaluate to the object when it is resolved. Details on the process is described in the next section,
 but using this is very simple.
 
@@ -174,10 +174,10 @@ o = ctx.eval("await new Promise((resolve) => { delay().then(x => 'all ' + x).the
 
 ### Threading details
 JavaScript is famously single-threaded, so for the above examples to work it's necessary to communicate with the JavaScript
-engine in a background thread. JSRuntime marshalls all its communication with the JavaScript engine onto the same thread,
+engine in a background thread. A JSRuntime marshalls all its communication with the JavaScript engine onto the same thread,
 which is managed internally by the library - **it is safe to share a context across multiple threads**. This isn't full
 concurrency - for example, if you iterate over a map in one thread and delete a value from it in another, a
-`ConcurrentModificationException` will be thrown. So don't do that.
+`ConcurrentModificationException` will be thrown. So don't do that. But calling `ctx.eval()` from multiple threads is fine.
 
 The exact details of the threading model are determined by a `TaskManager`, which can be set on the `JSRuntime`. Currently there
 are three options.
@@ -188,8 +188,7 @@ runtime.setTaskManager(TaskManager.useSharedThread());  // one thread for all ru
 runtime.setTaskManager(TaskManager.useOwnThread());     // one thread per runtime
 runtime.setTaskManager(TaskManager.useCurrentThread()); // no threading
 ```
-These need explaining
-* The _shared thread_ model uses a single background thread, running tasks for multiple runtimes in sequence.
+* The _shared thread_ model uses a single background thread, interleaving tasks for multiple runtimes in sequence.
   This is the default and for short-lived tasks (the JavaScript way) it's very effective, particularly
   if those tasks are going to be largely waiting for promises to complete, eg for network or file access
   (the "delay" example above has been tested with 1000 instances all running at once).
@@ -212,8 +211,10 @@ These need explaining
 
 ### Runtime vs Context
 A _Runtime_ is fully isolated, and multiple _Contexts_ within the same Runtime are independent only because they don't
-have a pointer from one to the other. In theory it should be possible to create one Runtime and run many Contexts, but
-in practice there are problems with this. For multiple tasks, for now the recommendation is create multiple Runtimes.
+have a pointer from one to the other. In theory it would be possible for one context to reference another (not implemented)
+or to create one Runtime and run many Contexts indepdently,
+but in practice there are problems with this (https://github.com/faceless2/quickjs-java/issues/5)
+For multiple tasks, for now the recommendation is create multiple Runtimes.
 ```java
 
 // This works
