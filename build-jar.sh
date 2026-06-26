@@ -4,11 +4,12 @@
 
 . ./env.sh
 
-javac --class-path ${CLASSPATH}:${WASM_TARGET_RESOURCES} \
+javac --class-path ${CLASSPATH_BUILD}:${WASM_TARGET_RESOURCES} \
       -d target/classes \
       --source-path src/main/java \
       --source-path ${WASM_TARGET_SOURCES} \
       -Xlint:unchecked \
       -Xlint:rawtypes \
+      -Xlint:deprecation \
       src/main/java/com/bfo/quickjs/*.java && \
 jar --create --file ${JAR_FILE} -C target/classes com -C ${WASM_TARGET_RESOURCES} com
