@@ -152,7 +152,7 @@ public class JSRuntime implements AutoCloseable {
      * @param logger the logger, or null to use the default
      * @return this
      */
-    public JSRuntime setLogger(Logger in) {
+    public JSRuntime setLogger(Logger logger) {
         if (instance != null) {
             throw new IllegalStateException("Already created");
         }
