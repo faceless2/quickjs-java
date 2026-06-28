@@ -198,7 +198,15 @@ public class JSContext extends AbstractMap<String,Object> implements AutoCloseab
         return p;
     }
 
-    // Next three all we need to implement AbstractMap
+    // Next few methods to implement AbstractMap
+
+    @Override public Object get(Object key) {
+        return globals.get(key);
+    }
+
+    @Override public Object remove(Object key) {
+        return globals.remove(key);
+    }
 
     @Override public Object put(String key, Object value) {
         return globals.put(key, value);
@@ -244,7 +252,6 @@ public class JSContext extends AbstractMap<String,Object> implements AutoCloseab
         return runtime.doLater(new Task<Object>("eval " + getPointer()) {
             public void run() {
                 final Task<Object> task = this;
-                final int proxySize0 = proxies.size();
                 lastAsyncTask = this;
                 byte[] data = runtime.fnEvalScriptAsync(JSContext.this, script);
                 Object o = unpack(data);

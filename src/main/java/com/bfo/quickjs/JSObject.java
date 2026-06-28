@@ -58,8 +58,8 @@ public class JSObject extends AbstractMap<String,Object> implements JSType, Auto
             return null;
         }
         // Otherwise simple globalThis.get() may fail, as we call keyset, then poll, then iterate the keyset values
-        byte[] b = ctx.pack(key);
-        Object value = ctx.unpack(ctx.getRuntime().fnObjectGet(JSObject.this, ctx.pack(key)));
+        byte[] keybytes = ctx.pack(key);
+        Object value = ctx.unpack(ctx.getRuntime().fnObjectGet(JSObject.this, keybytes));
         JSEntrySet entryset = this.entryset;
         if (entryset != null) {
             List<JSEntry> l = entryset.data;
@@ -74,6 +74,43 @@ public class JSObject extends AbstractMap<String,Object> implements JSType, Auto
         }
         return value;
     }
+
+    @Override public Object remove(Object key) {
+        if (!(key instanceof String)) {
+            return null;
+        }
+        // Override this method for the same reason as get() - otherwise we risk frequent ConcurrentModificationExceptions.
+        // However it's a bit more involved as we're changing content and have to return a value too.
+        final byte[] keybytes = ctx.pack(key);
+        JSEntrySet entryset = this.entryset;
+        if (entryset != null) {
+            List<JSEntry> l = entryset.data;
+            if (l != null) {
+                for (int i=0;i<l.size();i++) {
+                    // We have already queried the keyset, and it hasn't been invalidated
+                    // so we have to assume it represents the current state. Check if the
+                    // key exists, remove it if so.
+                    JSEntry e = l.get(i);
+                    if (e.getKey().equals(key)) {
+                        Object oldvalue = e.getValue();
+                        ctx.getRuntime().fnObjectRemove(JSObject.this, keybytes);
+                        l.remove(i--);  // Removal is pointless because we're going to invalidate
+                        ctx.bump();     // this set, but since we're here...
+                        return oldvalue;
+                    }
+                }
+                // We could remove anyway here, just in case logic in previous was wrong? TBD.
+                // ctx.getRuntime().fnObjectRemove(JSObject.this, keybytes);
+                return null;
+            }
+        }
+        // If we get here set wasn't populated anyway.
+        // We need to return previous value, so have to get it first.
+        Object oldvalue = ctx.unpack(ctx.getRuntime().fnObjectGet(JSObject.this, keybytes));
+        ctx.getRuntime().fnObjectRemove(JSObject.this, keybytes);
+        return oldvalue;
+    }
+
 
     @Override public Object put(String key, Object value) {
         if (key == null) {
