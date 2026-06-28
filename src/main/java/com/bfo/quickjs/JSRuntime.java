@@ -336,8 +336,10 @@ public class JSRuntime implements AutoCloseable {
 
                     });
                     WasmModule module = WasmLib.load();
-                    instance = Instance.builder(module).withImportValues(store.toImportValues()).withMemoryFactory(JSRuntimeMemory::new).withMachineFactory(WasmLib::create).build();
-                    // instance = Instance.builder(module).withImportValues(store.toImportValues()).build();
+                    Instance.Builder builder = Instance.builder(module).withImportValues(store.toImportValues());
+                    builder = builder.withMachineFactory(WasmLib::create);      // This adds the precompiled Wasm library. Should be optional, but in practice interpreted mode no longer works....
+                    builder = builder.withMemoryFactory(JSRuntimeMemory::new);  // This adds the JSRuntimeMemory from https://github.com/faceless2/quickjs-java/pull/7, which is required for ByteBufffer<->ArrayBuffer patch. 
+                    instance = builder.build();
                     pointer = fnRuntimeCreate();
 
                     int level;

@@ -84,6 +84,7 @@ final class JSRuntimeMemory implements com.dylibso.chicory.runtime.Memory {
         return limits.shared();
     }
 
+    @SuppressWarnings("removal")
     @Override public Object lock(int address) {
         if (!shared()) {
             return new Object();
@@ -91,10 +92,12 @@ final class JSRuntimeMemory implements com.dylibso.chicory.runtime.Memory {
         return locks.computeIfAbsent(address, k -> new Object());
     }
 
+    @SuppressWarnings("removal")
     @Override public int waitOn(int address, int expected, long timeout) {
         return waitOn(address, timeout, () -> readInt(address) == expected);
     }
 
+    @SuppressWarnings("removal")
     @Override public int waitOn(int address, long expected, long timeout) {
         return waitOn(address, timeout, () -> readLong(address) == expected);
     }
@@ -125,6 +128,7 @@ final class JSRuntimeMemory implements com.dylibso.chicory.runtime.Memory {
         }
     }
 
+    @SuppressWarnings("removal")
     @Override public int notify(int address, int maxThreads) {
         if (!shared()) {
             return 0;
