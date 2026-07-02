@@ -106,7 +106,7 @@ public class ModuleTest {
                 context.evalModule("first.js", mainScript).join();
                 fail("should have failed");
             } catch (Exception e) {
-                assertEquals("Failed resolving module \"module.js\" from \"first.js\"", e.getCause().getMessage());
+                assertEquals("Error resolving module 'module.js' from 'first.js'", e.getCause().getMessage());
             }
         }
     }
@@ -129,7 +129,7 @@ public class ModuleTest {
                 context.evalModule("first.js", mainScript).join();
                 fail("should have failed");
             } catch (Exception e) {
-                assertEquals("Failed loading module \"module.js\"", e.getCause().getMessage());
+                assertEquals("Error loading module 'module.js'", e.getCause().getMessage());
             }
         }
     }
