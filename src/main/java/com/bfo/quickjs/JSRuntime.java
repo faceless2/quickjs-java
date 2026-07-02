@@ -21,6 +21,7 @@ public class JSRuntime implements AutoCloseable {
     private volatile Instance instance;                 // WASM instance
     private TaskManager tasker;
     private JSLogger logger;
+    private JSModuleResolver moduleResolver;
     private long threadId;                              // The ID of the Thread that will run all our tasks. Set by TaskManager
     private final Map<Long,JSContext> contexts = new HashMap<>();
     private InputStream stdin;                          // Streams
@@ -137,6 +138,19 @@ public class JSRuntime implements AutoCloseable {
             throw new IllegalStateException("Already created");
         }
         this.stderr = err;
+        return this;
+    }
+
+    /**
+     * Set an optional ModuleResolver that can be used to resolve ES6 Modules
+     * The default is no resolver, and any attempt to load a Module will result in an error
+     * @param resolver the resolver to use, or null to disable modules
+     */
+    public JSRuntime setModuleResolver(JSModuleResolver resolver) {
+        if (instance != null) {
+            throw new IllegalStateException("Already created");
+        }
+        this.moduleResolver = resolver;
         return this;
     }
 
@@ -331,6 +345,12 @@ public class JSRuntime implements AutoCloseable {
                         createHostFunction("env", "complete_completable_future", List.of(ValType.I64, ValType.I32, ValType.I32, ValType.I32, ValType.I32), List.of(ValType.I64),
                             (Instance instance, long... args) -> { fnCompleteCompletableFuture(args[0], (int)args[1], (int)args[2], (int)args[3], (int)args[4]); return new long[] { 0 }; }),
 
+                        createHostFunction("env", "resolve_module", List.of(ValType.I32, ValType.I32, ValType.I32, ValType.I32, ValType.I32), List.of(), 
+                            (Instance instance, long... args) -> { fnResolveModule((int)args[0], (int)args[1], (int)args[2], (int)args[3], (int)args[4]); return new long[0]; }),
+
+                        createHostFunction("env", "load_module", List.of(ValType.I32, ValType.I32, ValType.I32), List.of(), 
+                            (Instance instance, long... args) -> { fnLoadModule((int)args[0], (int)args[1], (int)args[2]); return new long[0]; }),
+
                         createHostFunction("env", "handle_rejected_promise", List.of(ValType.I64, ValType.I64, ValType.I32, ValType.I32, ValType.I32), List.of(),
                             (Instance instance, long... args) -> { fnHandleRejectedPromise(args[0], args[1], (int)args[2], (int)args[3], args[4] != 0); return new long[] { 0 }; })
 
@@ -347,6 +367,9 @@ public class JSRuntime implements AutoCloseable {
                     fnRuntimeInitLogger(Math.min(level, JSLogger.TRACE));
                     if (memoryLimit > 0) {
                         fnRuntimeSetMemoryLimit(memoryLimit);
+                    }
+                    if (moduleResolver != null) {
+                         fnSetLoader();
                     }
                     complete(null);
                 }
@@ -581,6 +604,55 @@ public class JSRuntime implements AutoCloseable {
         ctx.notifyUnhandledRejectedPromise(data, isHandled);
     }
 
+    /**
+     * Called to resolve a module path
+     * @param basePtr the pointer to the base string
+     * @param baseLen the length of the base string
+     * @param pathPtr the pointer to the path string
+     * @param pathLen the length of the path string
+     * @param outPtr a pointer to an eight-byte block, to which should be written the pointer and length of the normalized path, or 0/0 if resolve failed
+     */
+    private void fnResolveModule(int basePtr, int baseLen, int pathPtr, int pathLen, int outPtr) {
+        if (moduleResolver == null) {
+            throw new RuntimeException("No ModuleResolver");
+        }
+        byte[] data = fetch(basePtr, baseLen);
+        String base = new String(data, StandardCharsets.UTF_8);
+        data = fetch(pathPtr, pathLen);
+        String path = new String(data, StandardCharsets.UTF_8);
+//        dealloc(basePtr, baseLen);    // Should we deallocate these?
+//        dealloc(pathPtr, pathLen);
+
+        String normalized = null;
+        try {
+            normalized = moduleResolver.normalize(path, base);
+        } catch (Exception e) {}
+        long ptrlen = normalized == null ? 0 : store(normalized.getBytes(StandardCharsets.UTF_8));
+        instance.memory().writeI32(outPtr, ptrlen2ptr(ptrlen)); // don't make presumptions about internals of ptrlen
+        instance.memory().writeI32(outPtr + 4, ptrlen2len(ptrlen)); // write as two 32-bit words
+    }
+
+    /**
+     * Called to load a module
+     * @param namePtr the pointer to the base string
+     * @param nameLen the length of the base string
+     * @param outPtr a pointer to an eight-byte block, to which should be written the pointer and length of the module source, or 0/0 if load failed
+     */
+    private void fnLoadModule(int namePtr, int nameLen, int outPtr) {
+        if (moduleResolver == null) {
+            throw new RuntimeException("No ModuleResolver");
+        }
+        byte[] data = fetch(namePtr, nameLen);
+//        dealloc(namePtr, nameLen);            // Don't dealloc name! It's used in Rust after this method call.
+        String script = null;
+        try {
+            String name = new String(data, StandardCharsets.UTF_8);
+            script = moduleResolver.load(name);
+        } catch (Exception e) {}
+        long ptrlen = script == null ? 0 : store(script.getBytes(StandardCharsets.UTF_8));
+        instance.memory().writeI32(outPtr, ptrlen2ptr(ptrlen)); // don't make presumptions about internals of ptrlen
+        instance.memory().writeI32(outPtr + 4, ptrlen2len(ptrlen)); // write as two 32-bit words
+    }
 
     //-------------------------------------------------------------------------
     // Runtime functions
@@ -603,6 +675,10 @@ public class JSRuntime implements AutoCloseable {
 
     private void fnRuntimeInitLogger(int level) {
         call("init_logger_wasm", level);
+    }
+
+    private void fnSetLoader() {
+        call("set_loader_wasm", getPointer());
     }
 
     //-------------------------------------------------------------------------
@@ -711,6 +787,34 @@ public class JSRuntime implements AutoCloseable {
             return doNow(new Task<Boolean>("fnPoll") {
                 public void run() {
                     complete(call("poll_wasm", ctx.getPointer())[0] == 1);
+                }
+            }).get();
+        } catch (Exception e) {
+            throw toRuntimeException(e);
+        }
+    }
+
+    /**
+     * Evaluates a module
+     * @param name The name of the module.
+     * @param script The script to evaluate.
+     * @return a packed promise that resolves (to <code>undefined</code>) when the module finishes processing
+     */
+    public byte[] fnEvalModule(final JSContext ctx, final String name, final String script) {
+        try {
+            return doNow(new Task<byte[]>("fnEvalModule") {
+                public void run() {
+                    long nameptrlen = store(name.getBytes(StandardCharsets.UTF_8));
+                    long scriptptrlen = store(script.getBytes(StandardCharsets.UTF_8));
+                    scriptStart = System.currentTimeMillis();
+                    long[] r = call("eval_module_async_wasm", ctx.getPointer(), ptrlen2ptr(nameptrlen), ptrlen2len(nameptrlen), ptrlen2ptr(scriptptrlen), ptrlen2len(scriptptrlen));
+                    scriptStart = 0;
+                    dealloc(nameptrlen);
+                    dealloc(scriptptrlen);
+                    long ptrlen = r[0];
+                    byte[] data = fetch(ptrlen);
+                    dealloc(ptrlen);
+                    complete(data);
                 }
             }).get();
         } catch (Exception e) {

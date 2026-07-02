@@ -3,11 +3,18 @@ package com.bfo.quickjs;
 import java.lang.reflect.*;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Run tests without Maven
+ *
+ * Usage: java TestHarness className[.methodName] ...
+ */
 @SuppressWarnings({"rawtypes", "unchecked"})
 public class TestHarness {
 
     public static void main(String[] args) throws Exception {
+
         for (int i=0;i<args.length;i++) {
+
             JSLogger logger = JSLogger.toSystem(JSRuntime.class.getPackage().getName());
             String className = args[i], methodName = null;
             if (className.indexOf(".") > 0) {
